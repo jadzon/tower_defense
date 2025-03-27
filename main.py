@@ -1,9 +1,10 @@
 from PyQt6 import QtWidgets
-from PyQt6.QtGui import QBrush, QColor
+from PyQt6.QtGui import QBrush, QColor, QPixmap
 from PyQt6.QtWidgets import QApplication, QMainWindow, QGraphicsScene, QGraphicsView, QGraphicsItem
-from PyQt6.QtCore import QRectF, Qt, QEvent, QPoint
+from PyQt6.QtCore import QRectF, Qt, QEvent, QPoint, QRect
 import random
 import sys
+import os
 
 
 class MyWindow(QMainWindow):
@@ -30,44 +31,93 @@ class MyWindow(QMainWindow):
         self.view = QGraphicsView(self.scene, self)
         self.view.setGeometry(0, 0, self.width(), self.height())
 
-        # Set up mouse tracking
+
         self.view.setMouseTracking(True)
 
-        # Disable the built-in drag mode
+
         self.view.setDragMode(QGraphicsView.DragMode.NoDrag)
 
-        # Variables for middle-button dragging
+
         self.is_middle_pressed = False
         self.last_pos = None
+
+
+        self.loadTilesetTextures()
 
         self.generateMap()
         map_width = self.grid_size * self.tile_size
         map_height = self.grid_size * self.tile_size
         self.scene.setSceneRect(0, 0, map_width, map_height)
 
-        # Fit the view to show the entire map at start
+
         self.view.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
-        # Store the initial transform for reference
+
         self.initial_transform = self.view.transform()
 
-        # Disable scrollbars
+
         self.view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
-        # Install event filter to handle mouse events
+
         self.view.viewport().installEventFilter(self)
 
+    def loadTilesetTextures(self):
+
+        self.textures = {}
+
+        tileset_path = "./textures/tiles.png"
+        water_tile_path = "./textures/water_tile.png"
+
+        if not os.path.exists(tileset_path):
+            print(f"Tileset not found at {tileset_path}, using fallback colors")
+
+            self.textures['meadow'] = QBrush(QColor(50, 180, 50))
+            self.textures['ocean'] = QBrush(QColor(0, 0, 150))
+            self.textures['sand'] = QBrush(QColor(240, 220, 130))
+            self.textures['lake'] = QBrush(QColor(0, 100, 255))
+            return
+
+        # Load the tileset
+        tileset = QPixmap(tileset_path)
+        if tileset.isNull():
+            print("error while loading tileset")
+        water_tile = QPixmap(water_tile_path)
+        if tileset.isNull():
+            print("error while loading tileset")
+
+        meadow_tile = tileset.copy(QRect(0, 0, 16, 16))
+        self.textures['meadow'] = QBrush(meadow_tile)
+
+        ocean_tile = water_tile.copy(QRect(0, 0, 16, 16))
+        self.textures['ocean'] = QBrush(ocean_tile)
+
+        sand_tile = tileset.copy(QRect(144, 32, 16, 16))
+        self.textures['sand'] = QBrush(sand_tile)
+
+        lake_tile = tileset.copy(QRect(384, 32, 32, 32))
+        self.textures['lake'] = QBrush(lake_tile)
+
+        print("Successfully loaded textures from tileset!")
+
     def generateMap(self):
-        self.grid_size = 30
+        self.grid_size = 20
         self.tile_size = min(self.width(), self.height()) // self.grid_size
         self.grid = [[None for x in range(self.grid_size)] for y in range(self.grid_size)]
+
+        # Add some variety to the map
         for y in range(self.grid_size):
             for x in range(self.grid_size):
+                # Outer edge is ocean
                 if x < 2 or y < 2 or x >= self.grid_size - 2 or y >= self.grid_size - 2:
-                    tile = OceanTile(x, y, self.tile_size, None)
+                    tile = OceanTile(x, y, self.tile_size, self.textures['ocean'])
+
+                # Add some random sand patches
+                elif random.random() < 0.1:  # 10% chance for sand
+                    tile = SandTile(x, y, self.tile_size, self.textures['sand'])
+
                 else:
-                    tile = MeadowTile(x, y, self.tile_size, None)
+                    tile = MeadowTile(x, y, self.tile_size, self.textures['meadow'])
 
                 self.grid[y][x] = tile
                 self.scene.addItem(tile)
@@ -156,28 +206,29 @@ class MyWindow(QMainWindow):
 
 
 class TerrainTile(QGraphicsItem):
-    def __init__(self, x, y, size, terrain_type, parent=None):
+    def __init__(self, x, y, size, texture, parent=None):
         super(TerrainTile, self).__init__(parent)
 
         self.x = x
         self.y = y
         self.size = size
-        self.terrain_type = terrain_type
+        self.texture = texture
         self.setPos(x * size, y * size)
 
     def boundingRect(self):
         return QRectF(0, 0, self.size, self.size)
+
+    def paint(self, painter, option, widget):
+        # Draw the terrain with the texture
+        painter.setBrush(self.texture)
+        painter.setPen(Qt.PenStyle.NoPen)  # No outline
+        painter.drawRect(0, 0, self.size, self.size)
 
     def get_stats(self):
         return {}
 
 
 class OceanTile(TerrainTile):
-    def paint(self, painter, option, widget):
-        brush = QBrush(QColor(0, 0, 150))  # Dark blue
-        painter.setBrush(brush)
-        painter.drawRect(0, 0, self.size, self.size)
-
     def get_stats(self):
         return {
             "movement_cost": 999,  # Impassable
@@ -187,11 +238,6 @@ class OceanTile(TerrainTile):
 
 
 class LakeTile(TerrainTile):
-    def paint(self, painter, option, widget):
-        brush = QBrush(QColor(0, 100, 255))  # Blue
-        painter.setBrush(brush)
-        painter.drawRect(0, 0, self.size, self.size)
-
     def get_stats(self):
         return {
             "movement_cost": 4,
@@ -201,11 +247,6 @@ class LakeTile(TerrainTile):
 
 
 class MeadowTile(TerrainTile):
-    def paint(self, painter, option, widget):
-        brush = QBrush(QColor(50, 180, 50))
-        painter.setBrush(brush)
-        painter.drawRect(0, 0, self.size, self.size)
-
     def get_stats(self):
         return {
             "movement_cost": 1,
@@ -215,11 +256,6 @@ class MeadowTile(TerrainTile):
 
 
 class SandTile(TerrainTile):
-    def paint(self, painter, option, widget):
-        brush = QBrush(QColor(240, 220, 130))
-        painter.setBrush(brush)
-        painter.drawRect(0, 0, self.size, self.size)
-
     def get_stats(self):
         return {
             "movement_cost": 2,
